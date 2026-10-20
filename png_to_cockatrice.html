@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PNG to Cockatrice XML</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --ink: #1d2230; --muted: #667085;
+    --line: #d9dde5; --accent: #3b5bdb; --accent-ink: #ffffff; --danger: #c92a2a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #14161c; --panel: #1d212b; --ink: #e8ebf2; --muted: #98a2b3;
+            --line: #323847; --accent: #748ffc; --accent-ink: #11131a; --danger: #ff8787; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 20px 24px 8px; }
+  header h1 { margin: 0 0 4px; font-size: 22px; }
+  header p { margin: 0; color: var(--muted); }
+  main { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 20px; padding: 16px 24px 40px; align-items: start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .panel h2 { margin: 0 0 12px; font-size: 16px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .row > label { flex: 1 1 140px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+  input[type=text], select, textarea {
+    width: 100%; margin-top: 3px; padding: 7px 9px; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit;
+  }
+  textarea { resize: vertical; min-height: 70px; }
+  button { font: inherit; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line);
+           background: var(--panel); color: var(--ink); cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  button.danger { color: var(--danger); }
+  button:hover { filter: brightness(1.06); }
+  .drop { border: 2px dashed var(--line); border-radius: 10px; padding: 18px; text-align: center;
+          color: var(--muted); margin-bottom: 16px; transition: border-color .15s, background .15s; }
+  .drop.over { border-color: var(--accent); background: rgba(116,143,252,.08); }
+  .drop button { margin-top: 8px; }
+  .card { border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 14px; background: var(--panel); }
+  .card-grid { display: grid; grid-template-columns: 150px 1fr; gap: 14px; }
+  @media (max-width: 560px) { .card-grid { grid-template-columns: 1fr; } }
+  .thumb { width: 100%; aspect-ratio: 5 / 7; background: var(--bg); border: 1px solid var(--line);
+           border-radius: 8px; display: flex; align-items: center; justify-content: center;
+           color: var(--muted); font-size: 12px; overflow: hidden; text-align: center; }
+  .thumb img { width: 100%; height: 100%; object-fit: contain; }
+  .derived { font-size: 12px; color: var(--muted); margin: 2px 0 8px; }
+  .card-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; }
+  .out { position: sticky; top: 16px; }
+  pre { margin: 0; max-height: 60vh; overflow: auto; padding: 12px; background: var(--bg);
+        border: 1px solid var(--line); border-radius: 6px; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace;
+        white-space: pre; }
+  .buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 10px; }
+  .status { font-size: 12px; margin-top: 8px; min-height: 16px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>PNG → Cockatrice XML</h1>
+  <p>Add card images, fill in the card details, and download a ready-to-use Cockatrice custom set. Everything runs in your browser; nothing is uploaded.</p>
+</header>
+
+<main>
+  <div>
+    <div class="panel" style="margin-bottom:16px">
+      <h2>Set</h2>
+      <div class="row">
+        <label>Set code
+          <input type="text" id="setCode" value="CUS" maxlength="10">
+        </label>
+        <label>Set name
+          <input type="text" id="setName" value="Custom Cards">
+        </label>
+        <label>Release date
+          <input type="text" id="setDate" placeholder="YYYY-MM-DD">
+        </label>
+      </div>
+    </div>
+
+    <div class="drop" id="drop">
+      Drop one or more card images here (PNG, JPG, WebP). Each image becomes a card, named from its filename.
+      <br><button type="button" id="pick">Choose images…</button>
+      <input type="file" id="fileInput" accept="image/*" multiple hidden>
+    </div>
+
+    <div id="cards"></div>
+    <button type="button" id="addCard">+ Add card without image</button>
+  </div>
+
+  <div class="panel out">
+    <h2>Output</h2>
+    <pre id="xmlOut"></pre>
+    <div class="buttons">
+      <button type="button" class="primary" id="dlZip">Download ZIP (XML + images)</button>
+      <button type="button" id="dlXml">Download XML only</button>
+      <button type="button" id="copyXml">Copy XML</button>
+    </div>
+    <div class="status" id="status"></div>
+    <p class="hint">
+      The ZIP contains <code>customsets/&lt;SET&gt;.xml</code> and <code>pics/&lt;SET&gt;/&lt;Card Name&gt;.png</code>.
+      Extract it into your Cockatrice data folder (the one that holds <code>customsets</code> and <code>pics</code>), then restart Cockatrice.
+      Images are matched to cards by exact card name.
+    </p>
+  </div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  var cards = [];
+  var nextId = 1;
+
+  var $ = function (id) { return document.getElementById(id); };
+  var TYPES = ['Creature', 'Artifact', 'Enchantment', 'Land', 'Planeswalker', 'Battle', 'Instant', 'Sorcery', 'Kindred', 'Tribal'];
+
+  function newCard(props) {
+    var c = { id: nextId++, name: '', mana: '', type: '', text: '', pt: '', loyalty: '',
+              rarity: 'rare', picURL: '', file: null, url: null };
+    for (var k in props) c[k] = props[k];
+    return c;
+  }
+
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  /* ---------- derived fields ---------- */
+
+  function manaTokens(raw) {
+    var toks = [], re = /\{([^}]+)\}|(\d+)|([A-Za-z])/g, m;
+    while ((m = re.exec(raw || ''))) toks.push((m[1] || m[2] || m[3]).toUpperCase());
+    return toks;
+  }
+
+  function manaString(raw) {
+    return manaTokens(raw).map(function (t) {
+      return /^(\d+|[WUBRGCXS])$/.test(t) ? t : '{' + t + '}';
+    }).join('');
+  }
+
+  function cmcOf(raw) {
+    return manaTokens(raw).reduce(function (sum, t) {
+      if (/^\d+$/.test(t)) return sum + parseInt(t, 10);
+      if (t === 'X') return sum;
+      if (t.indexOf('/') >= 0) {
+        var nums = t.split('/').filter(function (p) { return /^\d+$/.test(p); }).map(Number);
+        return sum + (nums.length ? Math.max.apply(null, nums) : 1);
+      }
+      return sum + 1;
+    }, 0);
+  }
+
+  function colorsFromTokens(toks) {
+    var found = {};
+    toks.forEach(function (t) {
+      t.split('/').forEach(function (p) { if (/^[WUBRG]$/.test(p)) found[p] = true; });
+    });
+    return 'WUBRG'.split('').filter(function (c) { return found[c]; }).join('');
+  }
+
+  function colorIdentity(c) {
+    var toks = manaTokens(c.mana);
+    var re = /\{([^}]+)\}/g, m;
+    while ((m = re.exec(c.text || ''))) toks.push(m[1].toUpperCase());
+    return colorsFromTokens(toks);
+  }
+
+  function mainType(type) {
+    var left = (type || '').split(/\s[—–-]\s/)[0].split(/\s+/);
+    for (var i = 0; i < left.length; i++) {
+      if (TYPES.indexOf(left[i]) >= 0) return left[i];
+    }
+    return '';
+  }
+
+  function tableRow(type) {
+    if (/\bLand\b/.test(type)) return 0;
+    if (/\b(Instant|Sorcery)\b/.test(type)) return 3;
+    if (/\bCreature\b/.test(type)) return 2;
+    return 1;
+  }
+
+  function derived(c) {
+    return {
+      cmc: cmcOf(c.mana),
+      colors: colorsFromTokens(manaTokens(c.mana)),
+      identity: colorIdentity(c),
+      main: mainType(c.type)
+    };
+  }
+
+  /* ---------- XML ---------- */
+
+  function buildXml() {
+    var code = $('setCode').value.trim() || 'CUS';
+    var out = [];
+    out.push('<?xml version="1.0" encoding="UTF-8"?>');
+    out.push('<cockatrice_carddatabase version="4">');
+    out.push('  <sets>');
+    out.push('    <set>');
+    out.push('      <name>' + esc(code) + '</name>');
+    out.push('      <longname>' + esc($('setName').value.trim() || code) + '</longname>');
+    out.push('      <settype>Custom</settype>');
+    var date = $('setDate').value.trim();
+    if (date) out.push('      <releasedate>' + esc(date) + '</releasedate>');
+    out.push('    </set>');
+    out.push('  </sets>');
+    out.push('  <cards>');
+    cards.forEach(function (c) {
+      var name = c.name.trim();
+      if (!name) return;
+      var d = derived(c);
+      out.push('    <card>');
+      out.push('      <name>' + esc(name) + '</name>');
+      out.push('      <text>' + esc(c.text.replace(/\r\n?/g, '\n').trim()) + '</text>');
+      out.push('      <prop>');
+      out.push('        <layout>normal</layout>');
+      if (c.mana.trim()) out.push('        <manacost>' + esc(manaString(c.mana)) + '</manacost>');
+      out.push('        <cmc>' + d.cmc + '</cmc>');
+      if (c.type.trim()) out.push('        <type>' + esc(c.type.trim()) + '</type>');
+      if (d.main) out.push('        <maintype>' + esc(d.main) + '</maintype>');
+      if (d.colors) out.push('        <colors>' + d.colors + '</colors>');
+      if (d.identity) out.push('        <coloridentity>' + d.identity + '</coloridentity>');
+      if (c.pt.trim()) out.push('        <pt>' + esc(c.pt.trim()) + '</pt>');
+      if (c.loyalty.trim()) out.push('        <loyalty>' + esc(c.loyalty.trim()) + '</loyalty>');
+      out.push('      </prop>');
+      var pic = c.picURL.trim() ? ' picURL="' + esc(c.picURL.trim()) + '"' : '';
+      out.push('      <set rarity="' + esc(c.rarity) + '"' + pic + '>' + esc(code) + '</set>');
+      out.push('      <tablerow>' + tableRow(c.type) + '</tablerow>');
+      out.push('    </card>');
+    });
+    out.push('  </cards>');
+    out.push('</cockatrice_carddatabase>');
+    return out.join('\n') + '\n';
+  }
+
+  function refreshOutput() {
+    $('xmlOut').textContent = buildXml();
+  }
+
+  /* ---------- card UI ---------- */
+
+  function derivedLabel(c) {
+    var d = derived(c);
+    return 'Auto: cmc ' + d.cmc + ' · colors ' + (d.colors || 'none') +
+           ' · identity ' + (d.identity || 'none') + ' · type ' + (d.main || '?');
+  }
+
+  function renderCards() {
+    var box = $('cards');
+    box.innerHTML = '';
+    cards.forEach(function (c, i) {
+      var el = document.createElement('section');
+      el.className = 'card';
+      el.innerHTML =
+        '<div class="card-grid">' +
+          '<div><div class="thumb">' + (c.url ? '<img alt="">' : 'No image') + '</div>' +
+          '<button type="button" data-act="img" style="margin-top:8px;width:100%">' + (c.file ? 'Replace image' : 'Add image') + '</button>' +
+          '<input type="file" accept="image/*" hidden></div>' +
+          '<div>' +
+            '<div class="row">' +
+              '<label style="flex:2 1 200px">Card name<input type="text" data-k="name" value="' + esc(c.name) + '"></label>' +
+              '<label>Mana cost<input type="text" data-k="mana" placeholder="{2}{U}{R} or 2UR" value="' + esc(c.mana) + '"></label>' +
+            '</div>' +
+            '<label>Type line<input type="text" data-k="type" placeholder="Legendary Creature — Human Driver" value="' + esc(c.type) + '"></label>' +
+            '<label>Rules text<textarea data-k="text">' + esc(c.text) + '</textarea></label>' +
+            '<div class="row">' +
+              '<label>Power/Toughness<input type="text" data-k="pt" placeholder="2/2" value="' + esc(c.pt) + '"></label>' +
+              '<label>Loyalty<input type="text" data-k="loyalty" value="' + esc(c.loyalty) + '"></label>' +
+              '<label>Rarity<select data-k="rarity">' +
+                ['common', 'uncommon', 'rare', 'mythic'].map(function (r) {
+                  return '<option' + (r === c.rarity ? ' selected' : '') + '>' + r + '</option>';
+                }).join('') +
+              '</select></label>' +
+            '</div>' +
+            '<label>Image URL (optional, sets picURL)<input type="text" data-k="picURL" placeholder="https://…" value="' + esc(c.picURL) + '"></label>' +
+            '<div class="derived"></div>' +
+            '<div class="card-actions"><span></span><button type="button" class="danger" data-act="del">Remove card</button></div>' +
+          '</div>' +
+        '</div>';
+
+      if (c.url) el.querySelector('.thumb img').src = c.url;
+      var info = el.querySelector('.derived');
+      info.textContent = derivedLabel(c);
+
+      el.querySelectorAll('[data-k]').forEach(function (inp) {
+        var handler = function () {
+          c[inp.getAttribute('data-k')] = inp.value;
+          info.textContent = derivedLabel(c);
+          refreshOutput();
+        };
+        inp.addEventListener('input', handler);
+        inp.addEventListener('change', handler);
+      });
+
+      var fileInp = el.querySelector('input[type=file]');
+      el.querySelector('[data-act=img]').addEventListener('click', function () { fileInp.click(); });
+      fileInp.addEventListener('change', function () {
+        if (fileInp.files[0]) setImage(c, fileInp.files[0]);
+        renderCards();
+        refreshOutput();
+      });
+
+      el.querySelector('[data-act=del]').addEventListener('click', function () {
+        if (c.url) URL.revokeObjectURL(c.url);
+        cards.splice(i, 1);
+        renderCards();
+        refreshOutput();
+      });
+
+      box.appendChild(el);
+    });
+  }
+
+  function setImage(c, file) {
+    if (c.url) URL.revokeObjectURL(c.url);
+    c.file = file;
+    c.url = URL.createObjectURL(file);
+  }
+
+  function nameFromFile(fn) {
+    return fn.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
+  function addFiles(fileList) {
+    Array.prototype.forEach.call(fileList, function (f) {
+      if (!/^image\//.test(f.type)) return;
+      var c = newCard({ name: nameFromFile(f.name) });
+      setImage(c, f);
+      cards.push(c);
+    });
+    renderCards();
+    refreshOutput();
+  }
+
+  /* ---------- downloads ---------- */
+
+  function safeFileName(name) {
+    return name.replace(/[\\/:*?"<>|]/g, '').trim();
+  }
+
+  function extOf(file) {
+    var m = /\.([A-Za-z0-9]+)$/.exec(file.name);
+    if (m) return m[1].toLowerCase();
+    return (file.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+  }
+
+  function saveBlob(blob, filename) {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+
+  function status(msg) { $('status').textContent = msg; }
+
+  function setCode() { return ($('setCode').value.trim() || 'CUS').replace(/[^A-Za-z0-9_-]/g, ''); }
+
+  $('dlXml').addEventListener('click', function () {
+    saveBlob(new Blob([buildXml()], { type: 'application/xml' }), setCode() + '.xml');
+    status('XML downloaded.');
+  });
+
+  $('dlZip').addEventListener('click', function () {
+    if (typeof JSZip === 'undefined') {
+      status('The ZIP library could not load (are you offline?). Use "Download XML only" and copy images manually.');
+      return;
+    }
+    var code = setCode();
+    var zip = new JSZip();
+    zip.file('customsets/' + code + '.xml', buildXml());
+    var count = 0;
+    cards.forEach(function (c) {
+      var n = safeFileName(c.name);
+      if (c.file && n) {
+        zip.file('pics/' + code + '/' + n + '.' + extOf(c.file), c.file);
+        count++;
+      }
+    });
+    zip.generateAsync({ type: 'blob' }).then(function (blob) {
+      saveBlob(blob, code + '_cockatrice.zip');
+      status('ZIP downloaded (' + count + ' image' + (count === 1 ? '' : 's') + ').');
+    });
+  });
+
+  $('copyXml').addEventListener('click', function () {
+    var text = buildXml();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { status('Copied to clipboard.'); },
+                                               function () { status('Copy failed; select the text manually.'); });
+    } else {
+      status('Clipboard not available; select the text manually.');
+    }
+  });
+
+  /* ---------- wiring ---------- */
+
+  ['setCode', 'setName', 'setDate'].forEach(function (id) {
+    $(id).addEventListener('input', refreshOutput);
+  });
+
+  $('addCard').addEventListener('click', function () {
+    cards.push(newCard({}));
+    renderCards();
+    refreshOutput();
+  });
+
+  var drop = $('drop');
+  $('pick').addEventListener('click', function () { $('fileInput').click(); });
+  $('fileInput').addEventListener('change', function (e) { addFiles(e.target.files); e.target.value = ''; });
+  ['dragenter', 'dragover'].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('over'); });
+  });
+  drop.addEventListener('drop', function (e) { addFiles(e.dataTransfer.files); });
+
+  // Start with one empty card so the form is visible.
+  cards.push(newCard({}));
+  renderCards();
+  refreshOutput();
+})();
+</script>
+</body>
+</html>
